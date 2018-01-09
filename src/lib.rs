@@ -1,90 +1,90 @@
-#![feature(link_args)]
 #![allow(unused_attributes)]
+#![allow(non_upper_case_globals)]
+#![feature(link_args)]
+#![feature(pointer_methods)]
 #![link_args = "-Wl,-z,defs -Wl,--no-undefined -ldl"]
 
+extern crate badlog;
+#[macro_use]
+extern crate detour;
 extern crate goblin;
 #[macro_use]
 extern crate lazy_static;
 extern crate libc;
+#[macro_use]
+extern crate log;
+extern crate region;
 
-use std::sync::Mutex;
+use region::Protection;
 use goblin::elf::Elf;
-use libc::{c_char, c_int, c_void};
-use std::collections::HashSet;
+use detour::Detour;
 use std::ffi::CStr;
+use std::path::PathBuf;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 
 lazy_static! {
-    static ref DLOPEN: fn(*const c_char, c_int) -> *mut c_void = unsafe {
-        let sym = libc::dlsym(libc::RTLD_NEXT, "dlopen".as_ptr() as *const c_char);
-        if sym.is_null() {
-            panic!("{:?}", CStr::from_ptr(libc::dlerror()).to_str());
-        }
-        std::mem::transmute(sym)
+    static ref DLOPEN: fn(*const i8, i32) -> *mut u8 = unsafe {
+        badlog::init_from_env("TF2RS_LOG"); // bit hacky but trustable
+        std::mem::transmute(libc::dlsym(libc::RTLD_NEXT, "dlopen".as_ptr() as *const i8))
     };
+}
 
-    static ref LIBS_WANTED: HashSet<&'static str> = [
-        "dedicated_srv.so",
-        "engine_srv.so",
-        "filesystem_stdio.so",
-        "libtier0_srv.so",
-        "replay_srv.so",
-        "server_srv.so",
-        "soundemittersystem_srv.so",
-    ].iter().cloned().collect();
+const CServerGameDLL_DLLInit: &'static str =
+    "_ZN14CServerGameDLL7DLLInitEPFPvPKcPiES5_S5_P11CGlobalVars";
 
-    static ref LIBRARIES: Mutex<Vec<Library<'static>>> = Mutex::new(Vec::new());
+static_detours! {
+    struct DLLInit: extern "C" fn(*const (), *const (), *const (), *const ()) -> i8;
 }
 
 #[no_mangle]
-#[allow(unused_must_use)]
-pub extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
+pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *mut u8 {
     let handle = (DLOPEN)(filename, flags);
     if handle.is_null() {
         return handle;
     }
 
-    let safe_filename = unsafe { CStr::from_ptr(filename).to_string_lossy().into_owned() };
+    let mut path = PathBuf::from("bin");
+    path.push(unsafe { CStr::from_ptr(filename) }.to_str().unwrap());
+    if !path.is_file() {
+        warn!("dlopen-ed but inexistant: {}", path.display());
+        return handle;
+    }
 
-    std::panic::catch_unwind(|| {
-        lib_hook(safe_filename, handle as *mut ());
-    });
+    info!("processing: {:?}", path.file_name().unwrap());
+    let mut buffer = Vec::new();
+    let mut fd = File::open(path).unwrap();
+    fd.read_to_end(&mut buffer).unwrap();
+    let elf = Elf::parse(&buffer.as_slice()).unwrap();
+    let syms = elf.syms;
+
+    elf.strtab
+        .to_vec()
+        .expect("strtab failed to turn into vec")
+        .iter()
+        .position(|&x| x == CServerGameDLL_DLLInit)
+        .map(|idx| unsafe {
+            let sym = syms.get(idx).expect("failed to fetch existing sym??");
+            let base = *(handle as *mut *mut i64);
+            let ptr = base.add(sym.st_value as usize);
+            debug!(
+                "ptr: {:p}, ptr+sym {:p}, sym {:x}, size {:?}",
+                base, ptr, sym.st_value, sym.st_size,
+            );
+            region::protect(
+                ptr as *mut u8,
+                sym.st_size as usize,
+                Protection::ReadWriteExecute,
+            ).expect("rwx");
+            DLLInit
+                .initialize(std::mem::transmute(ptr), |a, b, c, d| {
+                    debug!("WE IN BOYS AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                    DLLInit.get().expect("idfk").call(a, b, c, d)
+                })
+                .expect("help")
+                .enable()
+                .expect("help2");
+        });
 
     handle
-}
-
-fn lib_hook(filename: String, handle: *mut ()) {
-    let mut path = PathBuf::from("bin"); // FIXME
-    path.push(filename);
-
-    if !LIBS_WANTED.contains(&path.file_name().unwrap().to_str().unwrap()) {
-        return;
-    }
-
-    let mut buffer = Vec::new();
-    let mut fd = File::open(path.clone()).unwrap();
-    fd.read_to_end(&mut buffer).unwrap();
-    Library::new(path, Elf::parse(&buffer).unwrap(), handle);
-}
-
-#[derive(Debug)]
-struct Library<'a> {
-    path: PathBuf,
-    elf: Elf<'a>,
-    ptr: *mut (),
-}
-
-unsafe impl<'a> Send for Library<'a> {}
-unsafe impl<'a> Sync for Library<'a> {}
-
-impl<'a> Library<'a> {
-    fn new(path: PathBuf, elf: Elf<'a>, ptr: *mut ()) -> Library<'a> {
-        Library {
-            path: path,
-            elf: elf,
-            ptr: ptr,
-        }
-    }
 }
