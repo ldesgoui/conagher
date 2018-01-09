@@ -22,6 +22,7 @@ use std::ffi::CStr;
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::Read;
+use std::collections::HashMap;
 
 lazy_static! {
     static ref DLOPEN: fn(*const i8, i32) -> *mut u8 = unsafe {
@@ -55,36 +56,28 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *mut u8 {
     let mut buffer = Vec::new();
     let mut fd = File::open(path).unwrap();
     fd.read_to_end(&mut buffer).unwrap();
-    let elf = Elf::parse(&buffer.as_slice()).unwrap();
-    let syms = elf.syms;
 
-    elf.strtab
-        .to_vec()
-        .expect("strtab failed to turn into vec")
+    let elf = Elf::parse(&buffer).unwrap();
+    let map: HashMap<&str, goblin::elf::sym::Sym> = elf.syms
         .iter()
-        .position(|&x| x == CServerGameDLL_DLLInit)
-        .map(|idx| unsafe {
-            let sym = syms.get(idx).expect("failed to fetch existing sym??");
-            let base = *(handle as *mut *mut i64);
+        .map(|sym| (elf.strtab.get(sym.st_name).unwrap().unwrap(), sym))
+        .collect();
+
+    match map.get(CServerGameDLL_DLLInit) {
+        None => (),
+        Some(sym) => unsafe {
+            let base = *(handle as *mut *mut u8);
             let ptr = base.add(sym.st_value as usize);
-            debug!(
-                "ptr: {:p}, ptr+sym {:p}, sym {:x}, size {:?}",
-                base, ptr, sym.st_value, sym.st_size,
-            );
-            region::protect(
-                ptr as *mut u8,
-                sym.st_size as usize,
-                Protection::ReadWriteExecute,
-            ).expect("rwx");
-            DLLInit
+            region::protect(ptr, sym.st_size as usize, Protection::ReadWriteExecute).expect("rwx");
+            let mut hook = DLLInit
                 .initialize(std::mem::transmute(ptr), |a, b, c, d| {
-                    debug!("WE IN BOYS AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                    error!("WE IN BOYS AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
                     DLLInit.get().expect("idfk").call(a, b, c, d)
                 })
-                .expect("help")
-                .enable()
-                .expect("help2");
-        });
+                .expect("help");
+            hook.enable().expect("help2");
+        },
+    };
 
     handle
 }
