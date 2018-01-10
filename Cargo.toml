@@ -1,5 +1,5 @@
 [package]
-name = "tf2rs"
+name = "conagher"
 version = "0.1.0"
 authors = ["ldesgoui <ldesgoui@gmail.com>"]
 
@@ -14,4 +14,3 @@ lazy_static = "1.0.0"
 detour = "0.3.0"
 log = "0.4"
 badlog = "1.0.0"
-region = "0.0.9"

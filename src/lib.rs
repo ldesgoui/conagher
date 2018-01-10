@@ -34,7 +34,7 @@ static_detours! {
 
 lazy_static! {
     static ref DLOPEN: fn(*const i8, i32) -> *const i8 = {
-        badlog::init_from_env("TF2RS_LOG"); // bit hacky but trustable
+        badlog::init_from_env("CONAGHER_LOG"); // bit hacky but trustable
         unsafe { std::mem::transmute(libc::dlsym(libc::RTLD_NEXT, "dlopen".as_ptr() as *const i8)) }
     };
 
