@@ -12,8 +12,8 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 
 # Roadmap
 
-- [ ] hooking CServerGameDLL::DLLInit
-- [ ] symbols (needs more functionality)
+- [x] hooking CServerGameDLL::DLLInit
+- [x] symbols (needs more functionality)
 - [ ] vtables
 - [ ] entprop/datamap etc
 - [ ] QOL for detours
@@ -21,11 +21,11 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 - [ ] Console {printing, commands, variables} support
 - [ ] Plugins (loading during runtime)
 - [ ] Web UI
-
+- [ ] become the #1 tool for competitive TF2
 
 # Mods
 
-- [ ] tickrate modifier
+- [x] tickrate modifier
 - [ ] fix sticky det delay
 - [ ] non-random pistol spread
 - [ ] fix wallbugs
@@ -36,4 +36,3 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 - [ ] reimpl MGEMod/SOAP/tf2 training
 - [ ] reimpl important TFTrue/CompCTRL/logs/demos features
 - [ ] easier workshop support
-- [ ] become the #1 tool for competitive TF2
