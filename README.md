@@ -12,8 +12,8 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 
 # Roadmap
 
-- [*] hooking CServerGameDLL::DLLInit
-- [*] symbols (needs more functionality)
+- [ ] hooking CServerGameDLL::DLLInit
+- [ ] symbols (needs more functionality)
 - [ ] vtables
 - [ ] entprop/datamap etc
 - [ ] QOL for detours
@@ -25,7 +25,7 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 
 # Mods
 
-- [*] tickrate modifier
+- [ ] tickrate modifier
 - [ ] fix sticky det delay
 - [ ] non-random pistol spread
 - [ ] fix wallbugs
