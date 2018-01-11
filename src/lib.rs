@@ -3,7 +3,6 @@
 #![allow(non_snake_case)]
 #![feature(concat_idents)]
 #![feature(link_args)]
-#![feature(pointer_methods)]
 #![link_args = "-Wl,-z,defs -Wl,--no-undefined -ldl"]
 
 extern crate badlog;
@@ -16,10 +15,11 @@ extern crate lazy_static;
 extern crate libc;
 #[macro_use]
 extern crate log;
+extern crate region;
 
-use detour::Detour;
-use detour::StaticDetour;
-use goblin::elf::Elf;
+use detour::{Detour, StaticDetour};
+use goblin::elf::Sym;
+use region::{Protection, View};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs::File;
@@ -39,7 +39,7 @@ lazy_static! {
         unsafe { std::mem::transmute(libc::dlsym(libc::RTLD_NEXT, "dlopen".as_ptr() as *const i8)) }
     };
 
-    static ref SYMBOLS: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
+    static ref SYMBOLS: Mutex<HashMap<String, Sym>> = Mutex::new(HashMap::new());
 
     static ref detour_CServerGameDLL_DLLInit: Mutex<
         StaticDetour<fn(*const (), *const (), *const (), *const (), *const ()) -> i8>,
@@ -113,17 +113,19 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
 
     let library_addr: usize = unsafe { *(handle as *const *const i8) as usize };
 
-    Elf::parse(&buffer)
+    goblin::elf::Elf::parse(&buffer)
         .map(|elf| {
             info!("dlopen: processing {:?}", path.file_name().unwrap());
             let mut map = SYMBOLS.try_lock().unwrap();
             elf.syms
                 .iter()
-                .map(|sym| {
-                    map.insert(
-                        elf.strtab.get_unsafe(sym.st_name).unwrap().to_string(),
-                        library_addr + sym.st_value as usize,
-                    )
+                .map(|mut sym| {
+                    sym.st_value += library_addr as u64;
+                    assert!(
+                        sym.st_value <= std::usize::MAX as u64,
+                        "symbol points to 64bit address"
+                    );
+                    map.insert(elf.strtab.get_unsafe(sym.st_name).unwrap().to_string(), sym)
                 })
                 .last();
         })
@@ -151,9 +153,23 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
             .unwrap()
             .enable()
             .unwrap();
+
+        let vptr =
+            (symbol("_ZTV25CTFProjectile_HealingBolt").unwrap() as *mut *mut usize).offset(225);
+        let mut view = View::new(vptr as *const u8, 4).unwrap();
+        view.exec_with_prot(Protection::ReadWriteExecute, || {
+            std::ptr::write(
+                vptr,
+                CTFProjectile_HealingBolt_CanCollideWithTeammates as *mut usize,
+            );
+        }).unwrap();
     };
 
     handle
+}
+
+extern "C" fn CTFProjectile_HealingBolt_CanCollideWithTeammates() -> u8 {
+    1
 }
 
 fn symbol(name: &str) -> Option<*const ()> {
@@ -161,5 +177,5 @@ fn symbol(name: &str) -> Option<*const ()> {
         .lock()
         .unwrap()
         .get(name)
-        .map(|&sym| unsafe { std::mem::transmute(sym) })
+        .map(|sym| unsafe { std::mem::transmute(sym.st_value as usize) })
 }
