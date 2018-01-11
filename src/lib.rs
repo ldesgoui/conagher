@@ -31,59 +31,76 @@ static_detours! {
     struct CServerGameDLL_DLLInit: fn(*const (), *const (), *const (), *const (), *const ()) -> i8;
     struct CServerGameDLL_GetTickInterval: fn() -> f32;
     struct CBaseProjectile_CanCollideWithTeammates: fn() -> i8;
+    struct CTFWeaponBaseGrenadeProj_InitGrenade: extern "C" fn(*const (), *const Vector, *mut Vector, *const (), *const ());
 }
 
-lazy_static! {
-    static ref DLOPEN: fn(*const i8, i32) -> *const i8 = {
-        badlog::init_from_env("CONAGHER_LOG"); // bit hacky but trustable
-        unsafe { std::mem::transmute(libc::dlsym(libc::RTLD_NEXT, "dlopen".as_ptr() as *const i8)) }
-    };
+lazy_static!{
 
-    static ref SYMBOLS: Mutex<HashMap<String, Sym>> = Mutex::new(HashMap::new());
+static ref DLOPEN: fn(*const i8, i32) -> *const i8 = {
+    badlog::init_from_env("CONAGHER_LOG"); // bit hacky but trustable
+    unsafe { std::mem::transmute(libc::dlsym(libc::RTLD_NEXT, "dlopen".as_ptr() as *const i8)) }
+};
 
-    static ref detour_CServerGameDLL_DLLInit: Mutex<
-        StaticDetour<fn(*const (), *const (), *const (), *const (), *const ()) -> i8>,
-    > = Mutex::new(unsafe {
-        info!("Applying detour to: {:?}", cpp_demangle::Symbol::new("_ZN14CServerGameDLL7DLLInitEPFPvPKcPiES5_S5_P11CGlobalVars").unwrap().to_string());
-        CServerGameDLL_DLLInit
+static ref SYMBOLS: Mutex<HashMap<String, Sym>> = Mutex::new(HashMap::new());
+
+static ref detour_CServerGameDLL_DLLInit: Mutex<
+    StaticDetour<fn(*const (), *const (), *const (), *const (), *const ()) -> i8>,
+> = Mutex::new(unsafe {
+    CServerGameDLL_DLLInit
+        .initialize(
+            std::mem::transmute(
+                symbol("_ZN14CServerGameDLL7DLLInitEPFPvPKcPiES5_S5_P11CGlobalVars")
+                    .expect("CServerGameDLL_DLLInit detour initialized with no symbol available"),
+            ),
+            |this, a, b, c, d| {
+                info!("We're in business.");
+                CServerGameDLL_DLLInit.get().unwrap().call(this, a, b, c, d)
+            },
+        )
+        .expect("Failed to initialize DLLInit detour")
+});
+
+static ref detour_CServerGameDLL_GetTickInterval: Mutex<StaticDetour<fn() -> f32>> =
+    Mutex::new(unsafe {
+        CServerGameDLL_GetTickInterval
             .initialize(
-                std::mem::transmute(
-                    symbol("_ZN14CServerGameDLL7DLLInitEPFPvPKcPiES5_S5_P11CGlobalVars")
-                        .expect("CServerGameDLL_DLLInit detour initialized with no symbol available"),
-                ),
-                |this, a, b, c, d| {
-                    info!("We're in business.");
-                    CServerGameDLL_DLLInit.get().unwrap().call(this, a, b, c, d)
-                },
+                std::mem::transmute(symbol("_ZNK14CServerGameDLL15GetTickIntervalEv").unwrap()),
+                || 0.015,
             )
-            .expect("Failed to initialize DLLInit detour")
+            .unwrap()
     });
 
-    static ref detour_CServerGameDLL_GetTickInterval: Mutex<StaticDetour<fn() -> f32>> =
-        Mutex::new(unsafe {
-        info!("Applying detour to: {:?}", cpp_demangle::Symbol::new("_ZNK14CServerGameDLL15GetTickIntervalEv").unwrap().to_string());
-            CServerGameDLL_GetTickInterval
-                .initialize(
-                    std::mem::transmute(symbol("_ZNK14CServerGameDLL15GetTickIntervalEv").unwrap()),
-                    || {
-                        0.008
-                    },
-                )
-                .unwrap()
-        });
+static ref detour_CBaseProjectile_CanCollideWithTeammates: Mutex<StaticDetour<fn() -> i8>> =
+    Mutex::new(unsafe {
+        CBaseProjectile_CanCollideWithTeammates
+            .initialize(
+                std::mem::transmute(
+                    symbol("_ZNK15CBaseProjectile23CanCollideWithTeammatesEv").unwrap(),
+                ),
+                || 0,
+            )
+            .unwrap()
+    });
 
-    static ref detour_CBaseProjectile_CanCollideWithTeammates: Mutex<StaticDetour<fn() -> i8>> =
-        Mutex::new(unsafe {
-        info!("Applying detour to: {:?}", cpp_demangle::Symbol::new("_ZNK15CBaseProjectile23CanCollideWithTeammatesEv").unwrap().to_string());
-            CBaseProjectile_CanCollideWithTeammates
-                .initialize(
-                    std::mem::transmute(symbol("_ZNK15CBaseProjectile23CanCollideWithTeammatesEv").unwrap()),
-                    || {
-                        0
-                    },
-                )
-                .unwrap()
-        });
+static ref detour_CTFWeaponBaseGrenadeProj_InitGrenade: Mutex<
+    StaticDetour<extern "C" fn(*const (), *const Vector, *mut Vector, *const (), *const ())>,
+> = Mutex::new(unsafe {
+    CTFWeaponBaseGrenadeProj_InitGrenade
+        .initialize(
+            std::mem::transmute(
+                symbol("_ZN24CTFWeaponBaseGrenadeProj11InitGrenadeERK6VectorS2_P20CBaseCombatCharacterRK13CTFWeaponInfo").unwrap(),
+            ),
+            |this, a, b, c, d| {
+                (*b).y = 0.0;
+                CTFWeaponBaseGrenadeProj_InitGrenade
+                    .get()
+                    .unwrap()
+                    .call(this, a, b, c, d)
+            },
+        )
+        .unwrap()
+});
+
 }
 
 #[no_mangle]
@@ -136,6 +153,8 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
             )
         });
 
+    debug!("{:?}", std::mem::size_of::<Vector>());
+
     unsafe {
         // TODO: safety (could crash if server_srv.so isnt loaded)
         detour_CServerGameDLL_DLLInit
@@ -153,6 +172,11 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
             .unwrap()
             .enable()
             .unwrap();
+        detour_CTFWeaponBaseGrenadeProj_InitGrenade
+            .try_lock()
+            .unwrap()
+            .enable()
+            .unwrap();
 
         let vptr =
             (symbol("_ZTV25CTFProjectile_HealingBolt").unwrap() as *mut *mut usize).offset(225);
@@ -166,6 +190,14 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
     };
 
     handle
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct Vector {
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
 extern "C" fn CTFProjectile_HealingBolt_CanCollideWithTeammates() -> u8 {
