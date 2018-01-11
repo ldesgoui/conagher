@@ -29,7 +29,8 @@ use std::sync::Mutex;
 
 static_detours! {
     struct CServerGameDLL_DLLInit: fn(*const (), *const (), *const (), *const (), *const ()) -> i8;
-    struct CServerGameDLL_GetTickInterval: fn(*const ()) -> f32;
+    struct CServerGameDLL_GetTickInterval: fn() -> f32;
+    struct CBaseProjectile_CanCollideWithTeammates: fn() -> i8;
 }
 
 lazy_static! {
@@ -58,14 +59,27 @@ lazy_static! {
             .expect("Failed to initialize DLLInit detour")
     });
 
-    static ref detour_CServerGameDLL_GetTickInterval: Mutex<StaticDetour<fn(*const ()) -> f32>> =
+    static ref detour_CServerGameDLL_GetTickInterval: Mutex<StaticDetour<fn() -> f32>> =
         Mutex::new(unsafe {
         info!("Applying detour to: {:?}", cpp_demangle::Symbol::new("_ZNK14CServerGameDLL15GetTickIntervalEv").unwrap().to_string());
             CServerGameDLL_GetTickInterval
                 .initialize(
                     std::mem::transmute(symbol("_ZNK14CServerGameDLL15GetTickIntervalEv").unwrap()),
-                    |_| {
+                    || {
                         0.008
+                    },
+                )
+                .unwrap()
+        });
+
+    static ref detour_CBaseProjectile_CanCollideWithTeammates: Mutex<StaticDetour<fn() -> i8>> =
+        Mutex::new(unsafe {
+        info!("Applying detour to: {:?}", cpp_demangle::Symbol::new("_ZNK15CBaseProjectile23CanCollideWithTeammatesEv").unwrap().to_string());
+            CBaseProjectile_CanCollideWithTeammates
+                .initialize(
+                    std::mem::transmute(symbol("_ZNK15CBaseProjectile23CanCollideWithTeammatesEv").unwrap()),
+                    || {
+                        0
                     },
                 )
                 .unwrap()
@@ -128,6 +142,11 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
             .enable()
             .unwrap();
         detour_CServerGameDLL_GetTickInterval
+            .try_lock()
+            .unwrap()
+            .enable()
+            .unwrap();
+        detour_CBaseProjectile_CanCollideWithTeammates
             .try_lock()
             .unwrap()
             .enable()
