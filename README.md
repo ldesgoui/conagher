@@ -12,3 +12,7 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 # A note on licensing
 
 `conagher` is, for now, copyrighted.
+
+# Thanks
+
+Thanks to @sigsegv-mvm for his libtf2mod.
