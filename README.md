@@ -1,4 +1,4 @@
-# conagher
+[![This picture contains original artwork for the game Team Fortress 2. The copyright for it is held by Valve Corporation, who created the software.](blob/master/header.png?raw=true)](http://www.teamfortress.com/engineerupdate/radigan/)
 
 `conagher` is a Rust library, it helps in the creation of server-side modifications for the game Team Fortress 2.
 It is only compatible with Linux.
@@ -12,6 +12,7 @@ Once those symbols are mapped to the library's memory, `conagher` applies patche
 # A note on licensing
 
 `conagher` is, for now, copyrighted.
+`header.png` contains original artwork for the game Team Fortress 2. The copyright for it is held by Valve Corporation, who created the software.
 
 # Thanks
 

@@ -65,7 +65,7 @@ static ref detour_CServerGameDLL_GetTickInterval: Mutex<StaticDetour<fn() -> f32
         CServerGameDLL_GetTickInterval
             .initialize(
                 std::mem::transmute(symbol("_ZNK14CServerGameDLL15GetTickIntervalEv").unwrap()),
-                || 0.015,
+                || 0.0078125, // 1/2^7
             )
             .unwrap()
     });
