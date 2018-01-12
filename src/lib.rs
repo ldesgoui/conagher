@@ -30,8 +30,9 @@ use std::sync::Mutex;
 static_detours! {
     struct CServerGameDLL_DLLInit: fn(*const (), *const (), *const (), *const (), *const ()) -> i8;
     struct CServerGameDLL_GetTickInterval: fn() -> f32;
+    struct CUniformRandomStream_RandomInt: fn(*const (), i32, i32) -> i32;
+    struct CUniformRandomStream_RandomFloat: fn(*const (), f32, f32) -> f32;
     struct CBaseProjectile_CanCollideWithTeammates: fn() -> i8;
-    struct CTFWeaponBaseGrenadeProj_InitGrenade: extern "C" fn(*const (), *const Vector, *mut Vector, *const (), *const ());
 }
 
 lazy_static!{
@@ -82,25 +83,35 @@ static ref detour_CBaseProjectile_CanCollideWithTeammates: Mutex<StaticDetour<fn
             .unwrap()
     });
 
-static ref detour_CTFWeaponBaseGrenadeProj_InitGrenade: Mutex<
-    StaticDetour<extern "C" fn(*const (), *const Vector, *mut Vector, *const (), *const ())>,
+static ref detour_CUniformRandomStream_RandomInt: Mutex<
+    StaticDetour<fn(*const (), i32, i32) -> i32>,
 > = Mutex::new(unsafe {
-    CTFWeaponBaseGrenadeProj_InitGrenade
+    CUniformRandomStream_RandomInt
         .initialize(
             std::mem::transmute(
-                symbol("_ZN24CTFWeaponBaseGrenadeProj11InitGrenadeERK6VectorS2_P20CBaseCombatCharacterRK13CTFWeaponInfo").unwrap(),
+                symbol("_ZN20CUniformRandomStream9RandomIntEii").unwrap(),
             ),
-            |this, a, b, c, d| {
-                (*b).y = 0.0;
-                CTFWeaponBaseGrenadeProj_InitGrenade
-                    .get()
-                    .unwrap()
-                    .call(this, a, b, c, d)
+            |this, min, max| {
+                (min + max) / 2
             },
         )
         .unwrap()
 });
 
+static ref detour_CUniformRandomStream_RandomFloat: Mutex<
+    StaticDetour<fn(*const (), f32, f32) -> f32>,
+> = Mutex::new(unsafe {
+    CUniformRandomStream_RandomFloat
+        .initialize(
+            std::mem::transmute(
+                symbol("_ZN20CUniformRandomStream11RandomFloatEff").unwrap(),
+            ),
+            |this, min, max| {
+                (min + max) / 2.0
+            },
+        )
+        .unwrap()
+});
 }
 
 #[no_mangle]
@@ -112,14 +123,7 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
 
     let mut path = PathBuf::from("bin");
     path.push(unsafe { CStr::from_ptr(filename) }.to_str().unwrap());
-    // TODO
-    if path.file_name().unwrap() != "server_srv.so" {
-        debug!(
-            "dlopen: skipping uninteresting {:?}",
-            path.file_name().unwrap()
-        );
-        return handle;
-    } else if !path.is_file() {
+    if !path.is_file() {
         warn!("dlopen of inexistant: {}", path.display());
         return handle;
     }
@@ -142,7 +146,8 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
                         sym.st_value <= std::usize::MAX as u64,
                         "symbol points to 64bit address"
                     );
-                    map.insert(elf.strtab.get_unsafe(sym.st_name).unwrap().to_string(), sym)
+                    let name = elf.strtab.get_unsafe(sym.st_name).unwrap().to_string();
+                    map.insert(name, sym)
                 })
                 .last();
         })
@@ -153,41 +158,47 @@ pub extern "C" fn dlopen(filename: *const i8, flags: i32) -> *const i8 {
             )
         });
 
-    debug!("{:?}", std::mem::size_of::<Vector>());
-
-    unsafe {
-        // TODO: safety (could crash if server_srv.so isnt loaded)
-        detour_CServerGameDLL_DLLInit
-            .try_lock()
-            .unwrap()
-            .enable()
-            .unwrap();
-        detour_CServerGameDLL_GetTickInterval
-            .try_lock()
-            .unwrap()
-            .enable()
-            .unwrap();
-        detour_CBaseProjectile_CanCollideWithTeammates
-            .try_lock()
-            .unwrap()
-            .enable()
-            .unwrap();
-        detour_CTFWeaponBaseGrenadeProj_InitGrenade
-            .try_lock()
-            .unwrap()
-            .enable()
-            .unwrap();
-
-        let vptr =
-            (symbol("_ZTV25CTFProjectile_HealingBolt").unwrap() as *mut *mut usize).offset(225);
-        let mut view = View::new(vptr as *const u8, 4).unwrap();
-        view.exec_with_prot(Protection::ReadWriteExecute, || {
-            std::ptr::write(
-                vptr,
-                CTFProjectile_HealingBolt_CanCollideWithTeammates as *mut usize,
-            );
-        }).unwrap();
-    };
+    match path.file_name().unwrap().to_str().unwrap() {
+        "server_srv.so" => unsafe {
+            detour_CServerGameDLL_DLLInit
+                .try_lock()
+                .unwrap()
+                .enable()
+                .unwrap();
+            detour_CServerGameDLL_GetTickInterval
+                .try_lock()
+                .unwrap()
+                .enable()
+                .unwrap();
+            detour_CBaseProjectile_CanCollideWithTeammates
+                .try_lock()
+                .unwrap()
+                .enable()
+                .unwrap();
+            let vptr =
+                (symbol("_ZTV25CTFProjectile_HealingBolt").unwrap() as *mut *mut usize).offset(225);
+            let mut view = View::new(vptr as *const u8, 4).unwrap();
+            view.exec_with_prot(Protection::ReadWriteExecute, || {
+                std::ptr::write(
+                    vptr,
+                    CTFProjectile_HealingBolt_CanCollideWithTeammates as *mut usize,
+                );
+            }).unwrap();
+        },
+        "libvstdlib_srv.so" => unsafe {
+            detour_CUniformRandomStream_RandomFloat
+                .try_lock()
+                .unwrap()
+                .enable()
+                .unwrap();
+            detour_CUniformRandomStream_RandomInt
+                .try_lock()
+                .unwrap()
+                .enable()
+                .unwrap();
+        },
+        _ => (),
+    }
 
     handle
 }
